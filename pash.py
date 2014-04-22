@@ -53,7 +53,7 @@ def getAliasList(omitPaths=False):
     for dirname in aliasParser.sections():
         if cwd.startswith(dirname):
             for item in aliasParser.items(dirname):
-                astr = "{}={}".format(item[0],item[1])
+                astr = "{}='{}'".format(item[0],item[1])
                 if not omitPaths:
                     astr += " [{}]".format(dirname)
                 aliasList.append(astr)
@@ -94,12 +94,17 @@ def cmd_init(args):
     """Generate commands to initialize bash."""
 
     print """
+function pash_load_aliases () {{
+    IFS=$'\n'
+    for a in `python {x} aliasLoad`; do
+        eval $a
+    done
+}}
+    
 function pash_cd () {{
     cd $@
     python {x} cd
-    for a in `python {x} aliasList -r`; do
-        alias $a
-    done
+    pash_load_aliases
 }}
 unalias cd 2>/dev/null
 alias cd=pash_cd
@@ -124,9 +129,7 @@ alias la='python {x} aliasList'
 
 function lan () {{
     python {x} aliasNew "$@"
-    for a in `python {x} aliasList -r`; do
-        alias $a
-    done
+    pash_load_aliases
 }}
 
 function lad () {{
@@ -149,9 +152,13 @@ def cmd_listOtherTTYs(args):
             print ttystr
     
 def cmd_aliasList(args):
-    for astr in getAliasList(omitPaths=args.r):
+    for astr in getAliasList():
         print astr
-
+        
+def cmd_aliasLoad(args):
+    for astr in getAliasList(True):
+        print "alias " + astr
+        
 def cmd_aliasNew(args):
     addAlias(args.name, args.value)
 
@@ -199,8 +206,11 @@ if __name__=='__main__':
 
     parse_aliasList = subparsers.add_parser('aliasList', description="""
     List all applicable aliases.""")
-    parse_aliasList.add_argument("-r", action='store_true', help="Raw list")
     parse_aliasList.set_defaults(func=cmd_aliasList)
+
+    parse_aliasLoad = subparsers.add_parser('aliasLoad', description="""
+    Load all applicable aliases.""")
+    parse_aliasLoad.set_defaults(func=cmd_aliasLoad)
 
     if len(argv)==1:
         parser.print_usage()
