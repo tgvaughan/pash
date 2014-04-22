@@ -1,5 +1,5 @@
 from sys import argv, exit, stdin
-from os import mkdir, path, ttyname, getcwd, listdir
+from os import mkdir, path, ttyname, getcwd, listdir, remove
 from argparse import ArgumentParser
 from ConfigParser import ConfigParser
 
@@ -7,14 +7,51 @@ from ConfigParser import ConfigParser
 def getConfigDir():
     return path.expanduser("~/.cwd_config")
 
+### CWD management ###
+
 def getCWDfileName():
     return path.join(getConfigDir(),"cwd" + ttyname(stdin.fileno()).replace("/","_"))
 
-def getOtherCWDfileName(otherTTYname):
-    return path.join(getConfigDir(),"cwd_dev_" + otherTTYname.replace("@","").replace("/","_"))
-
 def getMainCWDfileName():
     return path.join(getConfigDir(),"main_cwd")
+
+def storeCWD():
+    with open(getCWDfileName(),'w') as cwdfile:
+        cwdfile.write(path.abspath(getcwd()))
+        cwdfile.close()
+
+def storeMainCWD():
+    with open(getMainCWDfileName(),'w') as cwdfile:
+        cwdfile.write(path.abspath(getcwd()))
+        cwdfile.close()            
+            
+def getStoredCWD():
+    if not path.exists(getCWDfileName()):
+        storeCWD()
+    return open(getCWDfileName(),'r').readline()
+
+def getStoredMainCWD():
+    if not path.exists(getMainCWDfileName()):
+        storeMainCWD()
+    return open(getMainCWDfileName(),'r').readline()
+
+def getOtherStoredCWDs():
+    cwdStrings = []
+    for fname in filter(lambda x: x.startswith("cwd"), listdir(getConfigDir())):
+        thisCWDfileName = path.abspath(path.join(getConfigDir(), fname))
+        if thisCWDfileName != getCWDfileName():
+            cwdStrings.append(open(thisCWDfileName,'r').readline())
+
+    return cwdStrings
+
+def delOtherStoredCWDs():
+    for fname in filter(lambda x: x.startswith("cwd"), listdir(getConfigDir())):
+        thisCWDfileName = path.abspath(path.join(getConfigDir(), fname))
+        if thisCWDfileName != getCWDfileName():
+            remove(thisCWDfileName)
+    
+
+### Aliases ###
 
 def getAliasFileName():
     return path.join(getConfigDir(),"aliases")
@@ -24,26 +61,6 @@ def getAliasConfigParser():
     if path.exists(getAliasFileName()):
         configParser.read(getAliasFileName())
     return configParser
-
-def storeCWD():
-    for cwdfilename in [getCWDfileName(), getMainCWDfileName()]:
-        with open(cwdfilename,'w') as cwdfile:
-            cwdfile.write(path.abspath(getcwd()))
-            cwdfile.close()
-    
-def getStoredCWD(otherTTYname=""):
-    if otherTTYname=="":
-        return open(getMainCWDfileName(),'r').readline()
-    else:
-        return open(getOtherCWDfileName(otherTTYname),'r').readline()
-
-def getOtherTTYsWithCWDs():
-    ttyStrings = []
-    for fname in filter(lambda x: x.startswith("cwd"), listdir(getConfigDir())):
-        if not path.abspath(path.join(getConfigDir(),fname))==getCWDfileName():
-            ttyStrings.append("@" + fname.replace("cwd_dev_","").replace("_","/"))
-
-    return ttyStrings
 
 def getAliasList(omitPaths=False):
     aliasList=[]
@@ -87,7 +104,8 @@ def delAlias(name):
         aliasParser.remove_section(cwd)
 
     aliasParser.write(open(getAliasFileName(),'w'))
-    
+
+
 ### Commands ###
 
 def cmd_init(args):
@@ -103,27 +121,32 @@ function pash_load_aliases () {{
     
 function pash_cd () {{
     cd $@
-    python {x} cd
+    python {x} storeCWD
     pash_load_aliases
 }}
 unalias cd 2>/dev/null
 alias cd=pash_cd
 
-function pash_cdc () {{
-     todir=`python {x} cdc $1`
-     cd $todir
+function cdc () {{
+    if [ $# -gt 0 ]; then
+        cd $@
+    else
+        cd `python {x} getMainCWD`
+    fi
 }}
-unalias cdc 2>/dev/null
-alias cdc=pash_cdc
 
-function pash_cdc_complete () {{
+function _cdc_complete () {{
     i=1
-    for tty in `python {x} listOtherTTYs "$2"`; do
+    for tty in `python {x} listOtherCWDs "$2"`; do
         COMPREPLY[$i]=$tty
         let i=i+1
     done
 }}
-complete -F pash_cdc_complete cdc
+complete -F _cdc_complete cdc
+
+function cdd () {{
+    python {x} delOtherCWDs
+}}
 
 alias la='python {x} aliasList'
 
@@ -140,17 +163,21 @@ function lad () {{
 }}
 """.format(x=argv[0])
 
-def cmd_cd(args):
+def cmd_storeCWD(args):
     storeCWD()
+    storeMainCWD()
 
-def cmd_cdc(args):
-    print getStoredCWD(args.othertty)
-
-def cmd_listOtherTTYs(args):
-    for ttystr in getOtherTTYsWithCWDs():
-        if ttystr.startswith(args.partial):
-            print ttystr
+def cmd_getMainCWD(args):
+    print getStoredMainCWD()
     
+def cmd_listOtherCWDs(args):
+    for cwd in getOtherStoredCWDs():
+        if cwd.startswith(args.partial):
+            print cwd
+
+def cmd_delOtherCWDs(args):
+    delOtherStoredCWDs()
+            
 def cmd_aliasList(args):
     for astr in getAliasList():
         print astr
@@ -179,19 +206,22 @@ if __name__=='__main__':
     Generate (bash) shell commands for initialization.""")
     parse_init.set_defaults(func=cmd_init)
 
-    parse_cd = subparsers.add_parser('cd', description="""
+    parse_cd = subparsers.add_parser('storeCWD', description="""
     Updating recorded CWD for this terminal following directory change.""")
-    parse_cd.set_defaults(func=cmd_cd)
+    parse_cd.set_defaults(func=cmd_storeCWD)
 
-    parse_cdc = subparsers.add_parser('cdc', description="""
-    Obtain CWD of any current terminal.""")
-    parse_cdc.add_argument("othertty", default="", nargs="?")
-    parse_cdc.set_defaults(func=cmd_cdc)
+    parse_getMainCWD = subparsers.add_parser('getMainCWD', description="""
+    Get main (shared) CWD.""")
+    parse_getMainCWD.set_defaults(func=cmd_getMainCWD)
+        
+    parse_listOtherCWDs = subparsers.add_parser('listOtherCWDs', description="""
+    Obtain list of _other_ stored CWDs.""")
+    parse_listOtherCWDs.add_argument("partial", type=str)
+    parse_listOtherCWDs.set_defaults(func=cmd_listOtherCWDs)
 
-    parse_listOtherTTYs = subparsers.add_parser('listOtherTTYs', description="""
-    Obtain list of _other_ TTYs with stored CWDs.""")
-    parse_listOtherTTYs.add_argument("partial", type=str)
-    parse_listOtherTTYs.set_defaults(func=cmd_listOtherTTYs)
+    parse_delOtherCWDs = subparsers.add_parser('delOtherCWDs', description="""
+    Delete all other stored CWDs.""")
+    parse_delOtherCWDs.set_defaults(func=cmd_delOtherCWDs)
 
     parse_aliasNew = subparsers.add_parser('aliasNew', description="""
     Create new local alias.""")
@@ -209,7 +239,7 @@ if __name__=='__main__':
     parse_aliasList.set_defaults(func=cmd_aliasList)
 
     parse_aliasLoad = subparsers.add_parser('aliasLoad', description="""
-    Load all applicable aliases.""")
+    Generate bash commands for loading all applicable aliases.""")
     parse_aliasLoad.set_defaults(func=cmd_aliasLoad)
 
     if len(argv)==1:
@@ -219,10 +249,6 @@ if __name__=='__main__':
     # Initialize cwd file named after controlling tty
     if not path.exists(getConfigDir()):
         mkdir(getConfigDir())
-    for CWDfileName in [getCWDfileName(), getMainCWDfileName()]:
-        with open(CWDfileName,'w') as cwdfile:
-            cwdfile.write(getcwd())
-            cwdfile.close()
         
     args = parser.parse_args(argv[1:])
     args.func(args)
