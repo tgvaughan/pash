@@ -124,10 +124,16 @@ alias la='python {x} aliasList'
 
 function lan () {{
     python {x} aliasNew "$@"
+    for a in `python {x} aliasList -r`; do
+        alias $a
+    done
 }}
 
 function lad () {{
-    python {x} aliasDel "$@"
+    if [ $# -eq 1 ]; then
+        python {x} aliasDel $1
+        unalias $1
+    fi
 }}
 """.format(x=argv[0])
 
@@ -202,9 +208,9 @@ if __name__=='__main__':
 
     # Initialize cwd file named after controlling tty
     if not path.exists(getConfigDir()):
-        mkdir(configdir)
-    if not path.exists(getCWDfileName()):
-        with open(getCWDfileName(),'w') as cwdfile:
+        mkdir(getConfigDir())
+    for CWDfileName in [getCWDfileName(), getMainCWDfileName()]:
+        with open(CWDfileName,'w') as cwdfile:
             cwdfile.write(getcwd())
             cwdfile.close()
         
