@@ -5,15 +5,18 @@ from ConfigParser import ConfigParser
 
 
 def getConfigDir():
-    return path.expanduser("~/.cwd_config")
+    return path.abspath(path.expanduser("~/.cwd_config"))
+
+def getTTYid():
+    return ttyname(stdin.fileno()).replace("/","_")
 
 ### CWD management ###
 
 def getCWDfileName():
-    return path.join(getConfigDir(),"cwd" + ttyname(stdin.fileno()).replace("/","_"))
+    return path.abspath(path.join(getConfigDir(),"cwd" + getTTYid()))
 
 def getMainCWDfileName():
-    return path.join(getConfigDir(),"main_cwd")
+    return path.abspath(path.join(getConfigDir(),"main_cwd"))
 
 def storeCWD():
     with open(getCWDfileName(),'w') as cwdfile:
@@ -62,7 +65,7 @@ def getAliasConfigParser():
         configParser.read(getAliasFileName())
     return configParser
 
-def getAliasList(omitPaths=False):
+def getAliasList():
     aliasList=[]
     aliasParser = getAliasConfigParser()
 
@@ -70,12 +73,25 @@ def getAliasList(omitPaths=False):
     for dirname in aliasParser.sections():
         if cwd.startswith(dirname):
             for item in aliasParser.items(dirname):
-                astr = "{}='{}'".format(item[0],item[1])
-                if not omitPaths:
-                    astr += " [{}]".format(dirname)
-                aliasList.append(astr)
+                aliasList.append((item[0],item[1],dirname))
 
     return aliasList
+
+def getLoadedAliasesFileName():
+    return path.abspath(path.join(getConfigDir(),"aliases" + getTTYid()))
+
+def getLoadedAliases():
+    aliasList = []
+    if path.exists(getLoadedAliasesFileName()):
+        with open(getLoadedAliasesFileName(),'r') as fob:
+            for line in fob.readlines():
+                aliasList.append(line.strip())
+    return aliasList
+
+def storeLoadedAliases(aliasList):
+    with open(getLoadedAliasesFileName(),'w') as fob:
+        for alias in aliasList:
+            fob.write(alias[0] + "\n")
 
 def addAlias(name, value):
     aliasParser = getAliasConfigParser()
@@ -115,7 +131,7 @@ def cmd_init(args):
 function pash_load_aliases () {{
     IFS=$'\n'
     for a in `python {x} aliasLoad`; do
-        eval $a
+        eval $a 2>/dev/null
     done
 }}
     
@@ -158,7 +174,7 @@ function lan () {{
 function lad () {{
     if [ $# -eq 1 ]; then
         python {x} aliasDel $1
-        unalias $1
+        pash_load_aliases
     fi
 }}
 """.format(x=argv[0])
@@ -179,12 +195,19 @@ def cmd_delOtherCWDs(args):
     delOtherStoredCWDs()
             
 def cmd_aliasList(args):
-    for astr in getAliasList():
-        print astr
+    for alias in getAliasList():
+        print "{}='{}' [{}]".format(alias[0], alias[1], alias[2])
         
 def cmd_aliasLoad(args):
-    for astr in getAliasList(True):
-        print "alias " + astr
+    for astr in getLoadedAliases():
+        print  "unalias " + astr
+
+    aliasList = getAliasList()
+    
+    for alias in aliasList:
+        print "alias {}='{}'".format(alias[0], alias[1])
+
+    storeLoadedAliases(aliasList)
         
 def cmd_aliasNew(args):
     addAlias(args.name, args.value)
